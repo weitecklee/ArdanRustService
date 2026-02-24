@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use axum::extract::{Path, Query};
+use axum::http::HeaderMap;
 use axum::{Router, response::Html, routing::get};
 
 #[tokio::main]
@@ -8,7 +9,8 @@ async fn main() {
     let app = Router::new()
         .route("/", get(handler))
         .route("/book/{id}", get(path_extract))
-        .route("/book", get(query_extract));
+        .route("/book", get(query_extract))
+        .route("/header", get(header_extract));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
@@ -28,4 +30,8 @@ async fn path_extract(Path(id): Path<u32>) -> Html<String> {
 
 async fn query_extract(Query(params): Query<HashMap<String, String>>) -> Html<String> {
     Html(format!("{params:#?}"))
+}
+
+async fn header_extract(headers: HeaderMap) -> Html<String> {
+    Html(format!("{headers:#?}"))
 }
