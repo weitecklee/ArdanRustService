@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{Extension, Json};
 use axum::{Router, response::Html, routing::get};
 
@@ -19,6 +19,36 @@ struct MyState(i32);
 
 struct Counter {
     count: AtomicUsize,
+}
+
+#[tokio::main]
+async fn main() {
+    let shared_counter = Arc::new(MyCounter {
+        counter: AtomicUsize::new(0),
+    });
+
+    let shared_text = Arc::new(MyConfig {
+        text: "This is my configuration.".to_string(),
+    });
+
+    let app = Router::new()
+        .nest("/1", service_one())
+        .nest("/2", service_two())
+        .nest("/counter", counter_sv())
+        .route("/", get(handler))
+        .route("/book/{id}", get(path_extract))
+        .route("/book", get(query_extract))
+        .route("/header", get(header_extract))
+        .route("/status", get(status_handler))
+        .layer(Extension(shared_counter))
+        .layer(Extension(shared_text));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
+        .await
+        .unwrap();
+
+    println!("Listening on 127.0.0.1:3001");
+    axum::serve(listener, app).await.unwrap();
 }
 
 fn service_one() -> Router {
@@ -74,35 +104,6 @@ async fn counter_inc(State(counter): State<Arc<Counter>>) -> Json<usize> {
     Json(current_value)
 }
 
-#[tokio::main]
-async fn main() {
-    let shared_counter = Arc::new(MyCounter {
-        counter: AtomicUsize::new(0),
-    });
-
-    let shared_text = Arc::new(MyConfig {
-        text: "This is my configuration.".to_string(),
-    });
-
-    let app = Router::new()
-        .nest("/1", service_one())
-        .nest("/2", service_two())
-        .nest("/counter", counter_sv())
-        .route("/", get(handler))
-        .route("/book/{id}", get(path_extract))
-        .route("/book", get(query_extract))
-        .route("/header", get(header_extract))
-        .layer(Extension(shared_counter))
-        .layer(Extension(shared_text));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
-        .await
-        .unwrap();
-
-    println!("Listening on 127.0.0.1:3001");
-    axum::serve(listener, app).await.unwrap();
-}
-
 async fn handler(
     Extension(counter): Extension<Arc<MyCounter>>,
     Extension(config): Extension<Arc<MyConfig>>,
@@ -127,4 +128,8 @@ async fn query_extract(Query(params): Query<HashMap<String, String>>) -> Html<St
 
 async fn header_extract(headers: HeaderMap) -> Html<String> {
     Html(format!("{headers:#?}"))
+}
+
+async fn status_handler() -> StatusCode {
+    StatusCode::IM_A_TEAPOT
 }
