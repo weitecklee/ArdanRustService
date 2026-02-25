@@ -9,6 +9,11 @@ use axum::middleware::Next;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Extension, Json, Router, middleware};
+use reqwest::Method;
+use tower::ServiceBuilder;
+use tower::limit::ConcurrencyLimitLayer;
+use tower_http::compression::CompressionLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 struct MyCounter {
@@ -42,6 +47,15 @@ async fn main() {
 
     let other = Router::new().route("/other", get(async || Html("The other route")));
 
+    let service = ServiceBuilder::new()
+        .layer(CompressionLayer::new())
+        .layer(
+            CorsLayer::new()
+                .allow_methods([Method::GET, Method::POST])
+                .allow_origin(Any),
+        )
+        .layer(ConcurrencyLimitLayer::new(100));
+
     let app = Router::new()
         .nest("/1", service_one())
         .nest("/2", service_two())
@@ -55,7 +69,9 @@ async fn main() {
         .layer(Extension(shared_text))
         .fallback_service(ServeDir::new("web"))
         .route_layer(middleware::from_fn(auth))
-        .merge(other);
+        .merge(other)
+        .route("/warandpeace", get(war_and_peace_handler))
+        .layer(service.into_inner());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
@@ -203,4 +219,9 @@ async fn auth(
         }
     }
     Err((StatusCode::UNAUTHORIZED, "invalid header".to_string()))
+}
+
+async fn war_and_peace_handler() -> impl IntoResponse {
+    const WAR_AND_PEACE: &str = include_str!("war_and_peace.txt");
+    Html(WAR_AND_PEACE)
 }
