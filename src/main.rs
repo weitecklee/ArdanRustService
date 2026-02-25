@@ -25,6 +25,11 @@ struct Counter {
     count: AtomicUsize,
 }
 
+#[derive(Clone)]
+struct AuthHeader {
+    id: String,
+}
+
 #[tokio::main]
 async fn main() {
     let shared_counter = Arc::new(MyCounter {
@@ -134,12 +139,8 @@ async fn query_extract(Query(params): Query<HashMap<String, String>>) -> Html<St
     Html(format!("{params:#?}"))
 }
 
-async fn header_handler(headers: HeaderMap) -> Html<String> {
-    if let Some(header) = headers.get("x-request-id") {
-        Html(format!("x-request-id: {}", header.to_str().unwrap()))
-    } else {
-        Html("x-request-id not found".to_string())
-    }
+async fn header_handler(Extension(auth): Extension<AuthHeader>) -> Html<String> {
+    Html(format!("x-request-id: {}", auth.id))
 }
 
 async fn status_handler() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -186,14 +187,17 @@ async fn make_request() {
 
 async fn auth(
     headers: HeaderMap,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    if let Some(header) = headers.get("x-request-id")
-        && header.to_str().unwrap() == "1234"
-    {
-        Ok(next.run(req).await)
-    } else {
-        Err((StatusCode::UNAUTHORIZED, "invalid header".to_string()))
+    if let Some(header) = headers.get("x-request-id") {
+        let header = header.to_str().unwrap();
+        if header == "1234" {
+            req.extensions_mut().insert(AuthHeader {
+                id: header.to_string(),
+            });
+            return Ok(next.run(req).await);
+        }
     }
+    Err((StatusCode::UNAUTHORIZED, "invalid header".to_string()))
 }
