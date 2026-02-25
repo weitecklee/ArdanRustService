@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
-use axum::{Extension, Json};
-use axum::{Router, response::Html, routing::get};
+use axum::middleware::Next;
+use axum::response::{Html, IntoResponse};
+use axum::routing::get;
+use axum::{Extension, Json, Router, middleware};
 use tower_http::services::ServeDir;
 
 struct MyCounter {
@@ -45,7 +46,8 @@ async fn main() {
         .route("/status", get(status_handler))
         .layer(Extension(shared_counter))
         .layer(Extension(shared_text))
-        .fallback_service(ServeDir::new("web"));
+        .fallback_service(ServeDir::new("web"))
+        .route_layer(middleware::from_fn(auth));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
@@ -169,4 +171,29 @@ async fn make_request() {
         .await
         .unwrap();
     println!("{}", response);
+
+    let response = reqwest::Client::new()
+        .get("http://localhost:3001/header")
+        .header("x-request-id", "bad")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    println!("{}", response);
+}
+
+async fn auth(
+    headers: HeaderMap,
+    req: Request,
+    next: Next,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if let Some(header) = headers.get("x-request-id")
+        && header.to_str().unwrap() == "1234"
+    {
+        Ok(next.run(req).await)
+    } else {
+        Err((StatusCode::UNAUTHORIZED, "invalid header".to_string()))
+    }
 }
