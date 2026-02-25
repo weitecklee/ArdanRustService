@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -40,7 +41,7 @@ async fn main() {
         .route("/", get(handler))
         .route("/book/{id}", get(path_extract))
         .route("/book", get(query_extract))
-        .route("/header", get(header_extract))
+        .route("/header", get(header_handler))
         .route("/status", get(status_handler))
         .layer(Extension(shared_counter))
         .layer(Extension(shared_text))
@@ -50,7 +51,9 @@ async fn main() {
         .await
         .unwrap();
 
-    println!("Listening on 127.0.0.1:3001");
+    tokio::spawn(make_request());
+
+    println!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -129,8 +132,12 @@ async fn query_extract(Query(params): Query<HashMap<String, String>>) -> Html<St
     Html(format!("{params:#?}"))
 }
 
-async fn header_extract(headers: HeaderMap) -> Html<String> {
-    Html(format!("{headers:#?}"))
+async fn header_handler(headers: HeaderMap) -> Html<String> {
+    if let Some(header) = headers.get("x-request-id") {
+        Html(format!("x-request-id: {}", header.to_str().unwrap()))
+    } else {
+        Html("x-request-id not found".to_string())
+    }
 }
 
 async fn status_handler() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -145,4 +152,21 @@ async fn status_handler() -> Result<impl IntoResponse, (StatusCode, String)> {
         .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "div by 0".to_string()))?;
 
     Ok(Json(divided))
+}
+
+async fn make_request() {
+    // Pause to let the server start up
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Make a request to the server
+    let response = reqwest::Client::new()
+        .get("http://localhost:3001/header")
+        .header("x-request-id", "1234")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    println!("{}", response);
 }
