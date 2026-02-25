@@ -40,6 +40,8 @@ async fn main() {
         text: "This is my configuration.".to_string(),
     });
 
+    let other = Router::new().route("/other", get(async || Html("The other route")));
+
     let app = Router::new()
         .nest("/1", service_one())
         .nest("/2", service_two())
@@ -52,7 +54,8 @@ async fn main() {
         .layer(Extension(shared_counter))
         .layer(Extension(shared_text))
         .fallback_service(ServeDir::new("web"))
-        .route_layer(middleware::from_fn(auth));
+        .route_layer(middleware::from_fn(auth))
+        .merge(other);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
