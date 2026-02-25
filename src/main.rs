@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use axum::{Router, response::Html, routing::get};
+use tower_http::services::ServeDir;
 
 struct MyCounter {
     counter: AtomicUsize,
@@ -42,7 +43,8 @@ async fn main() {
         .route("/header", get(header_extract))
         .route("/status", get(status_handler))
         .layer(Extension(shared_counter))
-        .layer(Extension(shared_text));
+        .layer(Extension(shared_text))
+        .fallback_service(ServeDir::new("web"));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
