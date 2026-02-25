@@ -4,12 +4,11 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Extension, Json, Router, middleware};
-use reqwest::Method;
 use tower::ServiceBuilder;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;

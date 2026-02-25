@@ -8,4 +8,8 @@ axum = "0.8.8"
 reqwest = { version = "0.13.2", features = ["json"] }
 tokio = { version = "1.49.0", features = ["full"] }
 tower = { version = "0.5.3", features = ["limit"] }
-tower-http = { version = "0.6.8", features = ["compression-full", "cors", "fs", "limit"] }
+tower-http = { version = "0.6.8", features = [
+  "compression-full",
+  "cors",
+  "fs",
+] }
