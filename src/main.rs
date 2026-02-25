@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
+use axum::{Extension, Json};
 use axum::{Router, response::Html, routing::get};
 
 struct MyCounter {
@@ -16,6 +16,10 @@ struct MyConfig {
 }
 
 struct MyState(i32);
+
+struct Counter {
+    count: AtomicUsize,
+}
 
 fn service_one() -> Router {
     let state = Arc::new(MyState(5));
@@ -40,6 +44,36 @@ fn service_two() -> Router {
     Router::new().route("/", get(|| async { Html("Service Two".to_string()) }))
 }
 
+fn counter_sv() -> Router {
+    let counter = Arc::new(Counter {
+        count: AtomicUsize::new(0),
+    });
+
+    Router::new()
+        .route("/", get(counter_handler))
+        .route("/inc", get(counter_inc))
+        .with_state(counter)
+}
+
+async fn counter_handler() -> Html<String> {
+    println!("Sending GET request");
+    let current_count = reqwest::get("http://localhost:3001/counter/inc")
+        .await
+        .unwrap()
+        .json::<i32>()
+        .await
+        .unwrap();
+    Html(format!("<h1>Remote Counter: {current_count} </h1>"))
+}
+
+async fn counter_inc(State(counter): State<Arc<Counter>>) -> Json<usize> {
+    println!("/inc service called");
+    let current_value = counter
+        .count
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Json(current_value)
+}
+
 #[tokio::main]
 async fn main() {
     let shared_counter = Arc::new(MyCounter {
@@ -53,6 +87,7 @@ async fn main() {
     let app = Router::new()
         .nest("/1", service_one())
         .nest("/2", service_two())
+        .nest("/counter", counter_sv())
         .route("/", get(handler))
         .route("/book/{id}", get(path_extract))
         .route("/book", get(query_extract))
