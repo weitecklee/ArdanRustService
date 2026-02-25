@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicUsize;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use axum::{Router, response::Html, routing::get};
 
@@ -130,6 +131,16 @@ async fn header_extract(headers: HeaderMap) -> Html<String> {
     Html(format!("{headers:#?}"))
 }
 
-async fn status_handler() -> StatusCode {
-    StatusCode::IM_A_TEAPOT
+async fn status_handler() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let start = std::time::SystemTime::now();
+    let seconds_wrapped = start
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Bad clock".to_string()))?
+        .as_secs()
+        % 3;
+    let divided = 100u64
+        .checked_div(seconds_wrapped)
+        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "div by 0".to_string()))?;
+
+    Ok(Json(divided))
 }
