@@ -14,6 +14,7 @@ use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
 struct MyCounter {
@@ -75,7 +76,8 @@ async fn main() {
         .route_layer(middleware::from_fn(auth))
         .merge(other)
         .route("/warandpeace", get(war_and_peace_handler))
-        .layer(service.into_inner());
+        .layer(service.into_inner())
+        .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
@@ -185,7 +187,7 @@ async fn make_request() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Make a request to the server
-    let response = reqwest::Client::new()
+    let _response = reqwest::Client::new()
         .get("http://localhost:3001/header")
         .header("x-request-id", "1234")
         .send()
@@ -194,9 +196,9 @@ async fn make_request() {
         .text()
         .await
         .unwrap();
-    info!("{}", response);
+    // info!("{}", response);
 
-    let response = reqwest::Client::new()
+    let _response = reqwest::Client::new()
         .get("http://localhost:3001/header")
         .header("x-request-id", "bad")
         .send()
@@ -205,7 +207,7 @@ async fn make_request() {
         .text()
         .await
         .unwrap();
-    error!("{}", response);
+    // error!("{}", response);
 }
 
 async fn auth(
@@ -215,13 +217,16 @@ async fn auth(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     if let Some(header) = headers.get("x-request-id") {
         let header = header.to_str().unwrap();
+        info!("received header: {}", header);
         if header == "1234" {
             req.extensions_mut().insert(AuthHeader {
                 id: header.to_string(),
             });
+            info!("valid header");
             return Ok(next.run(req).await);
         }
     }
+    error!("invalid header");
     Err((StatusCode::UNAUTHORIZED, "invalid header".to_string()))
 }
 
@@ -229,3 +234,5 @@ async fn war_and_peace_handler() -> impl IntoResponse {
     const WAR_AND_PEACE: &str = include_str!("war_and_peace.txt");
     Html(WAR_AND_PEACE)
 }
+
+// RUST_LOG=debug cargo run
