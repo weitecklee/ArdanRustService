@@ -41,6 +41,8 @@ struct AuthHeader {
 #[tokio::main]
 async fn main() {
     // setup tracing
+    let file_appender = tracing_appender::rolling::hourly("test.log", "prefix.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let subscriber = tracing_subscriber::fmt()
         .compact()
         .with_file(true)
@@ -48,6 +50,7 @@ async fn main() {
         .with_thread_ids(true)
         .with_target(false)
         .with_span_events(FmtSpan::CLOSE)
+        .with_writer(non_blocking)
         .finish();
     // setup subscriber as default
     tracing::subscriber::set_global_default(subscriber).unwrap();
