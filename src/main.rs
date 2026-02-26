@@ -15,7 +15,8 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 struct MyCounter {
     counter: AtomicUsize,
@@ -38,8 +39,18 @@ struct AuthHeader {
 
 #[tokio::main]
 async fn main() {
-    // setup default tracing
-    tracing_subscriber::fmt::init();
+    // setup tracing
+    let subscriber = tracing_subscriber::fmt()
+        .compact()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_target(false)
+        .with_span_events(FmtSpan::CLOSE)
+        .finish();
+    // setup subscriber as default
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
     info!("Starting server");
 
     let shared_counter = Arc::new(MyCounter {
@@ -210,6 +221,7 @@ async fn make_request() {
     // error!("{}", response);
 }
 
+#[instrument]
 async fn auth(
     headers: HeaderMap,
     mut req: Request,
