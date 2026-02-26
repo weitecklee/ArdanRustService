@@ -4,20 +4,27 @@ use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{Path, Query, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
-use axum::{Extension, Json, Router, middleware};
+use axum::{Extension, Json, Router};
+use opentelemetry::{KeyValue, global, logs::LogError, trace::TraceError};
+use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use opentelemetry_sdk::trace as sdktrace; // To avoid name conflicts
+use opentelemetry_sdk::{
+    Resource, logs::Config, metrics::MeterProvider, propagation::TraceContextPropagator, runtime,
+};
 use tower::ServiceBuilder;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info, instrument};
-use tracing_subscriber::fmt::format::FmtSpan;
+use tracing::{Level, error, info, instrument, level_filters::LevelFilter};
+// use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct MyCounter {
     counter: AtomicUsize,
@@ -40,21 +47,37 @@ struct AuthHeader {
 
 #[tokio::main]
 async fn main() {
-    // setup tracing
-    let file_appender = tracing_appender::rolling::hourly("test.log", "prefix.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    let subscriber = tracing_subscriber::fmt()
-        .compact()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_ids(true)
-        .with_target(false)
-        .with_span_events(FmtSpan::CLOSE)
-        .with_writer(non_blocking)
-        .json()
-        .finish();
-    // setup subscriber as default
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
+    let otlp_endpoint = "http://localhost:4317";
+
+    let tracer = init_tracer(otlp_endpoint).unwrap();
+
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    let subscriber = tracing_subscriber::registry()
+        .with(LevelFilter::from_level(Level::DEBUG))
+        .with(telemetry_layer);
+
+    subscriber.init();
+
+    let _meter_provider = init_metrics(otlp_endpoint);
+    let _log_provider = init_logs(otlp_endpoint);
+
+    // // setup tracing
+    // let file_appender = tracing_appender::rolling::hourly("test.log", "prefix.log");
+    // let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    // let subscriber = tracing_subscriber::fmt()
+    //     .compact()
+    //     .with_file(true)
+    //     .with_line_number(true)
+    //     .with_thread_ids(true)
+    //     .with_target(false)
+    //     .with_span_events(FmtSpan::CLOSE)
+    //     .with_writer(non_blocking)
+    //     .json()
+    //     .finish();
+    // // setup subscriber as default
+    // tracing::subscriber::set_global_default(subscriber).unwrap();
 
     info!("Starting server");
 
@@ -89,12 +112,12 @@ async fn main() {
         .layer(Extension(shared_counter))
         .layer(Extension(shared_text))
         .fallback_service(ServeDir::new("web"))
-        .route_layer(middleware::from_fn(auth))
+        // .route_layer(axum::middleware::from_fn(auth))
         .merge(other)
         .route("/warandpeace", get(war_and_peace_handler))
         .layer(service.into_inner())
         .layer(
-            TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<Body>| {
+            TraceLayer::new_for_http().make_span_with(|request: &Request<Body>| {
                 let request_id = uuid::Uuid::new_v4();
                 tracing::span!(
                     tracing::Level::INFO,
@@ -239,9 +262,9 @@ async fn make_request() {
 }
 
 #[instrument]
-async fn auth(
+async fn _auth(
     headers: HeaderMap,
-    mut req: Request,
+    mut req: axum::extract::Request,
     next: Next,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     if let Some(header) = headers.get("x-request-id") {
@@ -262,6 +285,59 @@ async fn auth(
 async fn war_and_peace_handler() -> impl IntoResponse {
     const WAR_AND_PEACE: &str = include_str!("war_and_peace.txt");
     Html(WAR_AND_PEACE)
+}
+
+fn init_tracer(otlp_endpoint: &str) -> Result<sdktrace::Tracer, TraceError> {
+    opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(otlp_endpoint),
+        )
+        .with_trace_config(
+            sdktrace::config().with_resource(Resource::new(vec![KeyValue::new(
+                "service.name",
+                "http_server",
+            )])),
+        )
+        .install_batch(runtime::Tokio)
+}
+
+fn init_metrics(otlp_endpoint: &str) -> opentelemetry::metrics::Result<MeterProvider> {
+    let export_config = ExportConfig {
+        endpoint: otlp_endpoint.to_string(),
+        ..ExportConfig::default()
+    };
+    opentelemetry_otlp::new_pipeline()
+        .metrics(runtime::Tokio)
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_export_config(export_config),
+        )
+        .with_resource(Resource::new(vec![KeyValue::new(
+            opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+            "http_server",
+        )]))
+        .build()
+}
+
+fn init_logs(otlp_endpoint: &str) -> Result<opentelemetry_sdk::logs::Logger, LogError> {
+    opentelemetry_otlp::new_pipeline()
+        .logging()
+        .with_log_config(
+            Config::default().with_resource(Resource::new(vec![KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                "http_server",
+            )])),
+        )
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(otlp_endpoint.to_string()),
+        )
+        .install_batch(runtime::Tokio)
 }
 
 // RUST_LOG=debug cargo run
