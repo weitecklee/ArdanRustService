@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
+use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
@@ -88,7 +89,19 @@ async fn main() {
         .merge(other)
         .route("/warandpeace", get(war_and_peace_handler))
         .layer(service.into_inner())
-        .layer(TraceLayer::new_for_http());
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &axum::http::Request<Body>| {
+                let request_id = uuid::Uuid::new_v4();
+                tracing::span!(
+                    tracing::Level::INFO,
+                    "request",
+                    method = tracing::field::display(request.method()),
+                    uri = tracing::field::display(request.uri()),
+                    version = tracing::field::debug(request.version()),
+                    request_id = tracing::field::display(request_id),
+                )
+            }),
+        );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3001")
         .await
