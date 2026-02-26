@@ -14,6 +14,7 @@ use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tracing::{error, info};
 
 struct MyCounter {
     counter: AtomicUsize,
@@ -36,6 +37,10 @@ struct AuthHeader {
 
 #[tokio::main]
 async fn main() {
+    // setup default tracing
+    tracing_subscriber::fmt::init();
+    info!("Starting server");
+
     let shared_counter = Arc::new(MyCounter {
         counter: AtomicUsize::new(0),
     });
@@ -78,7 +83,7 @@ async fn main() {
 
     tokio::spawn(make_request());
 
-    println!("listening on {}", listener.local_addr().unwrap());
+    info!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -189,7 +194,7 @@ async fn make_request() {
         .text()
         .await
         .unwrap();
-    println!("{}", response);
+    info!("{}", response);
 
     let response = reqwest::Client::new()
         .get("http://localhost:3001/header")
@@ -200,7 +205,7 @@ async fn make_request() {
         .text()
         .await
         .unwrap();
-    println!("{}", response);
+    error!("{}", response);
 }
 
 async fn auth(
