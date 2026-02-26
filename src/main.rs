@@ -51,6 +51,7 @@ async fn main() {
         .with_target(false)
         .with_span_events(FmtSpan::CLOSE)
         .with_writer(non_blocking)
+        .json()
         .finish();
     // setup subscriber as default
     tracing::subscriber::set_global_default(subscriber).unwrap();
