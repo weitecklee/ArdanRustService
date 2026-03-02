@@ -16,6 +16,7 @@ use opentelemetry_sdk::trace as sdktrace; // To avoid name conflicts
 use opentelemetry_sdk::{
     Resource, logs::Config, metrics::MeterProvider, propagation::TraceContextPropagator, runtime,
 };
+use serde::Serialize;
 use tower::ServiceBuilder;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;
@@ -25,6 +26,9 @@ use tower_http::trace::TraceLayer;
 use tracing::{Level, error, info, instrument, level_filters::LevelFilter};
 // use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use utoipa::{OpenApi, ToSchema};
+use utoipa_redoc::{Redoc, Servable};
+use utoipa_swagger_ui::SwaggerUi;
 
 struct MyCounter {
     counter: AtomicUsize,
@@ -47,6 +51,28 @@ struct AuthHeader {
 
 #[tokio::main]
 async fn main() {
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(
+            handler,
+            service_one,
+            service_two,
+            counter_sv,
+            query_extract,
+            path_extract,
+            header_handler,
+            status_handler,
+        ),
+        components(
+            schemas(VisitorNumber),
+        ),
+        modifiers(),
+        tags(
+            (name = "Test System", description = "A really simple API")
+        )
+    )]
+    struct ApiDoc;
+
     global::set_text_map_propagator(TraceContextPropagator::new());
 
     let otlp_endpoint = "http://localhost:4317";
@@ -101,6 +127,8 @@ async fn main() {
         .layer(ConcurrencyLimitLayer::new(100));
 
     let app = Router::new()
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
         .nest("/1", service_one())
         .nest("/2", service_two())
         .nest("/counter", counter_sv())
@@ -140,6 +168,13 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+#[utoipa::path(
+    get,
+    path = "/1",
+    responses(
+        (status = 200, description = "Access service 1", body = [String])
+    )
+)]
 fn service_one() -> Router {
     let state = Arc::new(MyState(5));
     Router::new().route("/", get(sv1_handler)).with_state(state)
@@ -159,10 +194,24 @@ async fn sv1_handler(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/2",
+    responses(
+        (status = 200, description = "Access service 2", body = [String])
+    )
+)]
 fn service_two() -> Router {
     Router::new().route("/", get(|| async { Html("Service Two".to_string()) }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/counter",
+    responses(
+        (status = 200, description = "Access counter service", body = [String])
+    )
+)]
 fn counter_sv() -> Router {
     let counter = Arc::new(Counter {
         count: AtomicUsize::new(0),
@@ -193,6 +242,18 @@ async fn counter_inc(State(counter): State<Arc<Counter>>) -> Json<usize> {
     Json(current_value)
 }
 
+#[derive(Serialize, ToSchema)]
+struct VisitorNumber {
+    message: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/",
+    responses(
+        (status = 200, description = "Display visitor number", body = [VisitorNumber])
+    )
+)]
 async fn handler(
     Extension(counter): Extension<Arc<MyCounter>>,
     Extension(config): Extension<Arc<MyConfig>>,
@@ -207,18 +268,47 @@ async fn handler(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/book/{id}",
+    responses(
+        (status = 200, description = "Extract id from path", body = [String])
+    )
+)]
 async fn path_extract(Path(id): Path<u32>) -> Html<String> {
     Html(format!("Hello, {id}!"))
 }
 
+#[utoipa::path(
+    get,
+    path = "/book",
+    responses(
+        (status = 200, description = "Extract id from parameters", body = [String])
+    )
+)]
 async fn query_extract(Query(params): Query<HashMap<String, String>>) -> Html<String> {
     Html(format!("{params:#?}"))
 }
 
+#[utoipa::path(
+    get,
+    path = "/header",
+    responses(
+        (status = 200, description = "Extract id from header", body = [String])
+    )
+)]
 async fn header_handler(Extension(auth): Extension<AuthHeader>) -> Html<String> {
     Html(format!("x-request-id: {}", auth.id))
 }
 
+#[utoipa::path(
+    get,
+    path = "/status",
+    responses(
+        (status = 200, description = "Display status", body = [String]),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, description = "internal server error", body = [String])
+    )
+)]
 async fn status_handler() -> Result<impl IntoResponse, (StatusCode, String)> {
     let start = std::time::SystemTime::now();
     let seconds_wrapped = start
@@ -282,6 +372,13 @@ async fn _auth(
     Err((StatusCode::UNAUTHORIZED, "invalid header".to_string()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/warandpeace",
+    responses(
+        (status = 200, description = "Display War and Peace", body = [String])
+    )
+)]
 async fn war_and_peace_handler() -> impl IntoResponse {
     const WAR_AND_PEACE: &str = include_str!("war_and_peace.txt");
     Html(WAR_AND_PEACE)
