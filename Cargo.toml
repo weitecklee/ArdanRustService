@@ -32,3 +32,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 utoipa = "4.2.0"
 utoipa-redoc = { version = "3.0.0", features = ["axum"] }
 utoipa-swagger-ui = { version = "6.0.0", features = ["axum"] }
+dotenvy = "0.15.7"

@@ -51,6 +51,8 @@ struct AuthHeader {
 
 #[tokio::main]
 async fn main() {
+    let _ = dotenvy::dotenv();
+
     #[derive(OpenApi)]
     #[openapi(
         paths(
@@ -105,7 +107,9 @@ async fn main() {
     // // setup subscriber as default
     // tracing::subscriber::set_global_default(subscriber).unwrap();
 
+    let testvar = std::env::var("TESTVAR").unwrap_or_else(|_| "default".to_string());
     info!("Starting server");
+    info!("testvar = {}", testvar);
 
     let shared_counter = Arc::new(MyCounter {
         counter: AtomicUsize::new(0),
