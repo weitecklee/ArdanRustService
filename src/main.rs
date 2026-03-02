@@ -10,13 +10,14 @@ use axum::middleware::Next;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Extension, Json, Router};
+use config::Config as Cfg;
 use opentelemetry::{KeyValue, global, logs::LogError, trace::TraceError};
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::trace as sdktrace; // To avoid name conflicts
 use opentelemetry_sdk::{
     Resource, logs::Config, metrics::MeterProvider, propagation::TraceContextPropagator, runtime,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tower::ServiceBuilder;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;
@@ -49,9 +50,26 @@ struct AuthHeader {
     id: String,
 }
 
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct EnvConfig {
+    test_toml: String,
+    testvar: String,
+}
+
 #[tokio::main]
 async fn main() {
     let _ = dotenvy::dotenv();
+
+    let settings_reader = Cfg::builder()
+        .add_source(config::File::with_name("settings").required(false))
+        .add_source(config::Environment::with_prefix("APP"))
+        .build()
+        .unwrap();
+
+    let settings = settings_reader.try_deserialize::<EnvConfig>().unwrap();
+
+    println!("{settings:#?}");
 
     #[derive(OpenApi)]
     #[openapi(
