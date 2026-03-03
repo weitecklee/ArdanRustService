@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
@@ -9,8 +10,8 @@ use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
-use axum::{Extension, Json, Router};
-use config::Config as Cfg;
+use axum::{Extension, Json, Router, async_trait};
+use config::{AsyncSource, Config as Cfg, ConfigError, FileFormat, Format, Map};
 use opentelemetry::{KeyValue, global, logs::LogError, trace::TraceError};
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::trace as sdktrace; // To avoid name conflicts
@@ -55,16 +56,47 @@ struct AuthHeader {
 struct EnvConfig {
     test_toml: String,
     testvar: String,
+    test_setting: String,
+}
+
+#[derive(Debug)]
+struct HttpSource<F: Format> {
+    uri: String,
+    format: F,
+}
+
+#[async_trait]
+impl<F: Format + Send + Sync + Debug> AsyncSource for HttpSource<F> {
+    async fn collect(&self) -> Result<Map<String, config::Value>, ConfigError> {
+        reqwest::get(&self.uri)
+            .await
+            .map_err(|e| ConfigError::Foreign(Box::new(e)))? // error conversion is possible from custom AsyncSource impls
+            .text()
+            .await
+            .map_err(|e| ConfigError::Foreign(Box::new(e)))
+            .and_then(|text| {
+                self.format
+                    .parse(Some(&self.uri), &text)
+                    .map_err(ConfigError::Foreign)
+            })
+    }
 }
 
 #[tokio::main]
 async fn main() {
+    tokio::spawn(settings_server());
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let _ = dotenvy::dotenv();
 
     let settings_reader = Cfg::builder()
         .add_source(config::File::with_name("settings").required(false))
         .add_source(config::Environment::with_prefix("APP"))
+        .add_async_source(HttpSource {
+            uri: "http://localhost:3002/".into(),
+            format: FileFormat::Toml,
+        })
         .build()
+        .await
         .unwrap();
 
     let settings = settings_reader.try_deserialize::<EnvConfig>().unwrap();
@@ -187,6 +219,17 @@ async fn main() {
     tokio::spawn(make_request());
 
     info!("listening on {}", listener.local_addr().unwrap());
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn settings_server() {
+    let app = Router::new().route("/", get(|| async { "test_setting = \"fromhttp\"" }));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3002")
+        .await
+        .unwrap();
+
+    println!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 

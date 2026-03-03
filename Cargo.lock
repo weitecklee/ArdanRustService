@@ -869,6 +869,7 @@ checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
 name = "http_server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum 0.7.9",
  "config",
  "dotenvy",
