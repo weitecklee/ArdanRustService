@@ -11,6 +11,7 @@ use axum::middleware::Next;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Extension, Json, Router, async_trait};
+use clap::{Arg, Command, value_parser};
 use config::{AsyncSource, Config as Cfg, ConfigError, FileFormat, Format, Map};
 use opentelemetry::{KeyValue, global, logs::LogError, trace::TraceError};
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
@@ -84,7 +85,45 @@ impl<F: Format + Send + Sync + Debug> AsyncSource for HttpSource<F> {
 
 #[tokio::main]
 async fn main() {
-    tokio::spawn(settings_server());
+    let matches = Command::new("simple_http_server")
+        .version("0.1.0")
+        .author("Teck")
+        .subcommand(
+            Command::new("serve")
+                .about("Starts the server")
+                .arg(
+                    Arg::new("address")
+                        .short('a')
+                        .long("address")
+                        .value_name("ADDRESS")
+                        .help("Sets the IP address to bind to"),
+                )
+                .arg(
+                    Arg::new("port")
+                        .short('p')
+                        .long("port")
+                        .value_name("PORT")
+                        .help("Sets the port to bind to")
+                        .value_parser(value_parser!(u16)),
+                ),
+        )
+        .get_matches();
+
+    if let Some(matches) = matches.subcommand_matches("serve") {
+        let address: String = matches
+            .get_one("address")
+            .cloned()
+            .unwrap_or("127.0.0.1".to_string());
+        let port: u16 = *matches.get_one("port").unwrap_or(&3002);
+        let bind_address = format!("{}:{}", address, port);
+        serve(&bind_address).await;
+    } else {
+        println!("Run with --help for details");
+    }
+}
+
+async fn serve(bind_address: &str) {
+    tokio::spawn(settings_server(bind_address.to_string()));
     tokio::time::sleep(Duration::from_secs(1)).await;
     let _ = dotenvy::dotenv();
 
@@ -92,7 +131,7 @@ async fn main() {
         .add_source(config::File::with_name("settings").required(false))
         .add_source(config::Environment::with_prefix("APP"))
         .add_async_source(HttpSource {
-            uri: "http://localhost:3002/".into(),
+            uri: format!("http://{bind_address}"),
             format: FileFormat::Toml,
         })
         .build()
@@ -222,12 +261,10 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn settings_server() {
+async fn settings_server(bind_address: String) {
     let app = Router::new().route("/", get(|| async { "test_setting = \"fromhttp\"" }));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3002")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(bind_address).await.unwrap();
 
     println!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
